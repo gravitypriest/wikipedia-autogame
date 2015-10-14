@@ -14,21 +14,21 @@ var MAX_DEPTH = 3;
 
 var visitedPages = [];
 
-var launch = function(title) {
+var launch = function(title, customTitle) {
     console.log('Starting page is: ' + title);
     console.log('Thinking...');
-    getLinks(title, MAX_DEPTH, []);
-}
+    getLinks(title, MAX_DEPTH, [], customTitle);
+};
 
 var getStartingPage = function(title) {
     if (title) {
-        launch(title);
+        launch(title, true);
     }
     else {
         request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
             var obj = JSON.parse(body);
             title = obj.query.random[0].title;
-            launch(title);
+            launch(title, false);
         });
     }
 };
@@ -55,7 +55,7 @@ var parseLinks = function(body) {
     });
 
     return links;
-}
+};
 
 var printResults = function(results) {
     res_str = '(START) ';
@@ -74,12 +74,16 @@ var printResults = function(results) {
     console.log('=============================================');
 };
 
-var getLinks = function(title, depth, path) {
+var getLinks = function(title, depth, path, customTitle) {
     request.get({url:WIKIPEDIA_API_URL, qs:buildParams(title)}, function(error, response, body) {
         if (!error && response.statusCode == 200) {
             visitedPages.push(title);
             new_path = path.slice();
             new_path.push(title);
+            if (new_path.length === 2 && new_path[0].toUpperCase() === new_path[1].toUpperCase() && customTitle) {
+                // avoid counting capitalization redirect for user-specified page as a step
+                new_path = new_path.slice(1);
+            }
             links = parseLinks(body);
 
             if (links) {
@@ -93,19 +97,18 @@ var getLinks = function(title, depth, path) {
                 for (var l in links) {
                     if (depth > 0) {
                         if (visitedPages.indexOf(links[l]) === -1 && !FOUND_HITLER) {
-                            getLinks(links[l], depth-1, new_path);
+                            getLinks(links[l], depth-1, new_path, customTitle);
                         }
                     }
                 }
             }
-
             else {
                 console.log('ERROR: Page \"' + title + '\" does not exist');
-                process.exit()
+                process.exit();
             }
         }  
     });
-}
+};
 
 var main = function() {
     var startPage = process.argv.slice(2).join(' ')
@@ -113,10 +116,10 @@ var main = function() {
         ('Start page specified!');
     }
     getStartingPage(startPage);
-}
+};
 
 if(require.main === module) {
     main();
-}
+};
 
 
