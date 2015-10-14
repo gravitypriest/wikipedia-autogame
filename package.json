@@ -1,0 +1,12 @@
+{
+	"name": "wikipedia-hitler",
+	"description": "Find Hitler in the shortest number of links from a Wikipedia page.",
+	"author": "Jeremy Crafts <craftsje@gmail.com>",
+	"version": "0.1.0",
+	"main": "hitler.js",
+	"dependencies": {
+		"request":">= 2.64.0"
+	},
+	"engine": "node >= 0.10.38",
+	"repository" :"gfys.biz"
+}
