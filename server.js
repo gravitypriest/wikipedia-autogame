@@ -1,24 +1,30 @@
 var child_process = require('child_process');
-var http = require('http');
 var url = require('url');
+var express = require('express');
 
-var get = function(request, response) {
+var app = express();
+
+app.get('/', function(req, res) {
 	full_path = '';
 	args = [];
-	query = url.parse(request.url, true).query
+	query = url.parse(req.url, true).query
+
 	if (query['start']) {
 		args.push('--start');
 		args.push(query['start']);
 	}
+
+	if (query['depth']) {
+		args.push('--depth')
+		args.push(query['depth']);
+	}
+
 	find = child_process.fork('hitler.js', args, {silent:true});
 	find.stdout.on('data', function(d){
 		console.log(d.toString());
-		response.end(d);
+		res.status(200).end(d);
 	});
-}
-
-var server = http.createServer(get);
-
-server.listen(8080, function() {
-	console.log('Server listening on port 8080');
 });
+
+app.listen(8080);
+console.log('Server listening on port 8080');

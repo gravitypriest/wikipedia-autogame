@@ -12,25 +12,29 @@ var RAND_PARAMS = {
 };
 var FOUND_HITLER = false;
 var DESTINATION = 'Adolf Hitler';
-var MAX_DEPTH = 4;
+var DEST_SHORT = 'Hitler';
+var DEST_REGEX = /(?:(?:adolf)*[_\ ]+)*hitler/i;
 
+// get arguments
 var start_page = argv['start'];
 var mode = argv['mode'] !== undefined ? argv['mode'] : 'json';
+var max_depth = (argv['depth'] !== undefined)
+             && (typeof argv['depth'] === 'number')
+             && (argv['depth'] % 1 === 0) ? argv['depth'] : 4;
 var visitedPages = [];
 
 var launch = function(title, customTitle) {
-    //console.log(title)
     if (mode === 'cmdline') {
         console.log('Starting page is: ' + title);
         console.log('Thinking...');
     }
     visitedPages.push(title);
     // if we get the ending page as the start page... well we're done aren't we?
-    if (title === DESTINATION) {
-        printResults([title]);
+    if (DEST_REGEX.test(title)) {
+        printResults([DESTINATION]);
         process.exit();
     }
-    getLinks(title, MAX_DEPTH, [], customTitle);
+    getLinks(title, max_depth, [], customTitle);
 };
 
 var getStartingPage = function(title) {
@@ -54,20 +58,36 @@ var buildParams = function(title) {
     };
 };
 
-var parseLinks = function(body) {
+var parseTitle = function(obj) {
+    return obj.parse.title;
+};
+
+var parseLinks = function(obj, redirect_check) {
     var namespace = 0;
-    obj = JSON.parse(body);
     if (obj.error && obj.error.code === 'missingtitle') {
         return false;
     }
     links_raw = obj.parse.links;
     links = links_raw.filter(function(f) {
-        return (f['ns'] === namespace && f['exists'] !== undefined);
+        if (!redirect_check) {
+            return (f['ns'] === namespace && f['exists'] !== undefined);
+        } else {
+            return (f['exists'] !== undefined);
+        }
     }).map(function(m){
         return m['*'];
     });
 
-    return links;
+    if (!redirect_check) {
+        return links;
+    }
+    else {
+        return (links.indexOf('Template:R from modification') !== -1
+            || (links.indexOf('Category:Redirects from other capitalisations') !== -1)
+            || (links.indexOf('Category:Redirects from surnames') !== -1)
+            || (links.indexOf('Wikipedia:Piped link') !== -1)
+            || (links.indexOf('Category:Redirects from alternative names') !== -1))
+    }
 };
 
 var printResults = function(results) {
@@ -95,21 +115,44 @@ var printResults = function(results) {
 var getLinks = function(title, depth, path, customTitle) {
     request.get({url:WIKIPEDIA_API_URL, qs:buildParams(title)}, function(error, response, body) {
         if (!error && response.statusCode == 200) {
-            new_path = path.slice();
-            new_path.push(title);
-            if (new_path.length === 2 && new_path[0].toUpperCase() === new_path[1].toUpperCase() && customTitle) {
-                // avoid counting capitalization redirect for user-specified page as a step
-                new_path = new_path.slice(1);
+            jsonData = JSON.parse(body);
+
+            if (customTitle) {
+                // title could have underscores or improper capitalization, so get it from api data
+                fixed_title = parseTitle(jsonData);
+                // fix 'visited' array too
+                visitedPages[visitedPages.indexOf(title)] = fixed_title;
             } else {
-                links = parseLinks(body, false);
+                fixed_title = title;
+            }
+
+            // if a custom start was given, on the first page 
+            //  do redirect check before pushing to the path
+            new_path = path.slice();
+            if (depth === max_depth && customTitle && parseLinks(jsonData, true)) {
+                // don't add to path because this is a redirect
+            } else {
+                new_path.push(fixed_title);
             }
             
+            // pull links out
+            links = parseLinks(jsonData, false);
+            
             if (links) {
-                if (links.indexOf(DESTINATION) !== -1) {
+                if (links.indexOf(DESTINATION) !== -1 || links.indexOf(DEST_SHORT) !== -1) {
                     new_path.push(DESTINATION);
                     FOUND_HITLER = true;
                     printResults(new_path);
                     process.exit();
+                }
+
+                // if we start on a dead end page (no links), abort
+                if (links.length === 0) {
+                    if (depth === max_depth) {
+                        process.stdout.write('DEAD_END_ERROR');
+                        process.exit();
+                    }
+                    return;
                 }
 
                 for (var l in links) {
@@ -122,12 +165,12 @@ var getLinks = function(title, depth, path, customTitle) {
                         }
                     } else {
                         if (mode === 'cmdline') {
-                            console.log('ERROR: Maximum depth exceeded (Max depth = ' + MAX_DEPTH + ')')
+                            console.log('ERROR: Maximum depth exceeded (Max depth = ' + max_depth + ')');
                         }
                         if (mode === 'json') {
                             process.stdout.write('MAX_DEPTH_ERROR');
                         }
-                        process.exit()
+                        process.exit();
                     }
                 }
             } else {
