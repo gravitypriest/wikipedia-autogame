@@ -59,14 +59,14 @@ var buildParams = function(title) {
 };
 
 var parseTitle = function(obj) {
+    if (obj.error && obj.error.code === 'missingtitle') {
+        return false;
+    }
     return obj.parse.title;
 };
 
 var parseLinks = function(obj, redirect_check) {
     var namespace = 0;
-    if (obj.error && obj.error.code === 'missingtitle') {
-        return false;
-    }
     links_raw = obj.parse.links;
     links = links_raw.filter(function(f) {
         if (!redirect_check) {
@@ -82,11 +82,16 @@ var parseLinks = function(obj, redirect_check) {
         return links;
     }
     else {
-        return (links.indexOf('Template:R from modification') !== -1
+        return ((links.indexOf('Template:R from modification') !== -1)
+            || (links.indexOf('Template:R from long name') !== -1)
+            || (links.indexOf('Template:R from short name') !== -1)
+            || (links.indexOf('Template:R from other capitalisation') !== -1)
+            || (links.indexOf('Template:R from plural') !== -1)
             || (links.indexOf('Category:Redirects from other capitalisations') !== -1)
             || (links.indexOf('Category:Redirects from surnames') !== -1)
-            || (links.indexOf('Wikipedia:Piped link') !== -1)
-            || (links.indexOf('Category:Redirects from alternative names') !== -1))
+            || (links.indexOf('Category:Redirects from alternative names') !== -1)
+            || (links.indexOf('Category:Redirects from modifications') !== -1)
+            || (links.indexOf('Wikipedia:Piped link') !== -1))
     }
 };
 
@@ -126,6 +131,17 @@ var getLinks = function(title, depth, path, customTitle) {
                 fixed_title = title;
             }
 
+            if (!fixed_title) {
+                // page doesn't exist
+                if (mode === 'cmdline') {
+                    console.log('ERROR: Page \"' + title + '\" does not exist');
+                }
+                if (mode === 'json') {
+                    process.stdout.write('NO_EXIST_ERROR');
+                }
+                process.exit();
+            }
+
             // if a custom start was given, on the first page 
             //  do redirect check before pushing to the path
             new_path = path.slice();
@@ -138,50 +154,40 @@ var getLinks = function(title, depth, path, customTitle) {
             // pull links out
             links = parseLinks(jsonData, false);
             
-            if (links) {
-                if (links.indexOf(DESTINATION) !== -1 || links.indexOf(DEST_SHORT) !== -1) {
-                    new_path.push(DESTINATION);
-                    FOUND_HITLER = true;
-                    printResults(new_path);
-                    process.exit();
-                }
-
-                // if we start on a dead end page (no links), abort
-                if (links.length === 0) {
-                    if (depth === max_depth) {
-                        process.stdout.write('DEAD_END_ERROR');
-                        process.exit();
-                    }
-                    return;
-                }
-
-                for (var l in links) {
-                    if (depth > 0) {
-                        if (visitedPages.indexOf(links[l]) === -1 && !FOUND_HITLER) {
-                            // add to the 'visited' array early to avoid waiting for the req
-                            //  to finish before adding, avoid dupes
-                            visitedPages.push(links[l]);
-                            getLinks(links[l], depth-1, new_path, customTitle);
-                        }
-                    } else {
-                        if (mode === 'cmdline') {
-                            console.log('ERROR: Maximum depth exceeded (Max depth = ' + max_depth + ')');
-                        }
-                        if (mode === 'json') {
-                            process.stdout.write('MAX_DEPTH_ERROR');
-                        }
-                        process.exit();
-                    }
-                }
-            } else {
-                if (mode === 'cmdline') {
-                    console.log('ERROR: Page \"' + title + '\" does not exist');
-                }
-                if (mode === 'json') {
-                    process.stdout.write('NO_EXIST_ERROR');
-                }
+            if (links.indexOf(DESTINATION) !== -1 || links.indexOf(DEST_SHORT) !== -1) {
+                new_path.push(DESTINATION);
+                FOUND_HITLER = true;
+                printResults(new_path);
                 process.exit();
             }
+
+            // if we start on a dead end page (no links), abort
+            if (links.length === 0) {
+                if (depth === max_depth) {
+                    process.stdout.write('DEAD_END_ERROR');
+                    process.exit();
+                }
+                return;
+            }
+
+            for (var l in links) {
+                if (depth > 0) {
+                    if (visitedPages.indexOf(links[l]) === -1 && !FOUND_HITLER) {
+                        // add to the 'visited' array early to avoid waiting for the req
+                        //  to finish before adding, avoid dupes
+                        visitedPages.push(links[l]);
+                        getLinks(links[l], depth-1, new_path, customTitle);
+                    }
+                } else {
+                    if (mode === 'cmdline') {
+                        console.log('ERROR: Maximum depth exceeded (Max depth = ' + max_depth + ')');
+                    }
+                    if (mode === 'json') {
+                        process.stdout.write('MAX_DEPTH_ERROR');
+                    }
+                    process.exit();
+                }
+            } 
         }  
     });
 };
