@@ -2,7 +2,8 @@
 //  OpenShift sample Node application
 var express = require('express');
 var fs      = require('fs');
-
+var child_process = require('child_process');
+var url = require("url");
 
 /**
  *  Define the sample application.
@@ -98,6 +99,32 @@ var SampleApp = function() {
         self.routes['/asciimo'] = function(req, res) {
             var link = "http://i.imgur.com/kmbjB.png";
             res.send("<html><body><img src='" + link + "'></body></html>");
+        };
+
+        self.routes['/find'] = function(req, res) {
+            console.log('Find request initiated...');
+            res.setHeader('Content-Type', 'application/json');
+            var full_path = '';
+            var args = [];
+            var query = url.parse(req.url, true).query
+
+            if (query['start']) {
+                console.log('Start specified: ' + query['start']);
+                args.push('--start');
+                args.push(query['start']);
+            }
+
+            if (query['depth']) {
+                console.log('Depth specified: ' + query['depth']);
+                args.push('--depth');
+                args.push(query['depth']);
+            }
+
+            find = child_process.fork('hitler.js', args, {silent:true});
+            find.stdout.on('data', function(d) {
+                console.log(d.toString());
+                res.send(d);
+            });
         };
 
         self.routes['/'] = function(req, res) {
