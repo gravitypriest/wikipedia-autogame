@@ -15,12 +15,12 @@ var DESTINATIONS = {
     'hitler': {
         'destination': 'Adolf Hitler',
         'dest_alt': 'Hitler',
-        'dest_regex': '/(?:(?:adolf)*[_\\ ]+)*hitler/i'
+        'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler'
     },
     'jesus': {
         'destination': 'Jesus',
         'dest_alt': 'Jesus Christ',
-        'dest_regex': '/jesus(?:[_\\ ]+(?:christ)*)*/i'
+        'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*'
     }
 };
 
@@ -38,7 +38,7 @@ if (DESTINATIONS[dest] === undefined) {
 }
 var destination = DESTINATIONS[dest]['destination'];
 var dest_alt = DESTINATIONS[dest]['dest_alt'];
-var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex']);
+var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex'], 'i');
 
 var visitedPages = [];
 var found_hitler = false;
