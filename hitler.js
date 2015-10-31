@@ -10,10 +10,19 @@ var RAND_PARAMS = {
     'rawcontinue':1,
     'format':'json'
 };
-var FOUND_HITLER = false;
-var DESTINATION = 'Adolf Hitler';
-var DEST_SHORT = 'Hitler';
-var DEST_REGEX = /(?:(?:adolf)*[_\ ]+)*hitler/i;
+
+var DESTINATIONS = {
+    'hitler': {
+        'destination': 'Adolf Hitler',
+        'dest_alt': 'Hitler',
+        'dest_regex': '/(?:(?:adolf)*[_\\ ]+)*hitler/i'
+    },
+    'jesus': {
+        'destination': 'Jesus',
+        'dest_alt': 'Jesus Christ',
+        'dest_regex': '/jesus(?:[_\\ ]+(?:christ)*)*/i'
+    }
+};
 
 // get arguments
 var start_page = argv['start'];
@@ -21,7 +30,18 @@ var mode = argv['mode'] !== undefined ? argv['mode'] : 'json';
 var max_depth = (argv['depth'] !== undefined)
              && (typeof argv['depth'] === 'number')
              && (argv['depth'] % 1 === 0) ? argv['depth'] : 4;
+var dest = argv['dest'] !== undefined ? argv['dest'].toLowerCase() : 'hitler';
+
+if (DESTINATIONS[dest] === undefined) {
+    process.stdout.write('BAD_DEST_ERROR');
+    process.exit();
+}
+var destination = DESTINATIONS[dest]['destination'];
+var dest_alt = DESTINATIONS[dest]['dest_alt'];
+var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex']);
+
 var visitedPages = [];
+var found_hitler = false;
 
 var launch = function(title, customTitle) {
     if (mode === 'cmdline') {
@@ -30,8 +50,8 @@ var launch = function(title, customTitle) {
     }
     visitedPages.push(title);
     // if we get the ending page as the start page... well we're done aren't we?
-    if (DEST_REGEX.test(title)) {
-        printResults([DESTINATION]);
+    if (dest_regex.test(title)) {
+        printResults([destination]);
         process.exit();
     }
     getLinks(title, max_depth, [], customTitle);
@@ -156,9 +176,9 @@ var getLinks = function(title, depth, path, customTitle) {
             // pull links out
             links = parseLinks(jsonData, false);
             
-            if (links.indexOf(DESTINATION) !== -1 || links.indexOf(DEST_SHORT) !== -1) {
-                new_path.push(DESTINATION);
-                FOUND_HITLER = true;
+            if (links.indexOf(destination) !== -1 || links.indexOf(dest_alt) !== -1) {
+                new_path.push(destination);
+                found_hitler = true;
                 printResults(new_path);
                 process.exit();
             }
@@ -174,7 +194,7 @@ var getLinks = function(title, depth, path, customTitle) {
 
             for (var l in links) {
                 if (depth > 0) {
-                    if (visitedPages.indexOf(links[l]) === -1 && !FOUND_HITLER) {
+                    if (visitedPages.indexOf(links[l]) === -1 && !found_hitler) {
                         // add to the 'visited' array early to avoid waiting for the req
                         //  to finish before adding, avoid dupes
                         visitedPages.push(links[l]);
@@ -196,7 +216,7 @@ var getLinks = function(title, depth, path, customTitle) {
 
 var main = function() {
     if (mode !== 'cmdline' && mode !== 'json') {
-        process.stdout.write('ERROR: invalid --mode specified\n');
+        process.stdout.write('BAD_MODE_ERROR');
         process.exit();
     }
     if (start_page) {
