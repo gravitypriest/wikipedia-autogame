@@ -1,8 +1,15 @@
+/*------ Imports ------*/
 var request = require('request');
 var argv = require('minimist')(process.argv.slice(2));
 var MongoClient = require('mongodb').MongoClient;
 var assert = require('assert');
 
+/*------ Constants ------*/
+// openshift DB vars
+var OPENSHIFT_MONGODB_DB_HOST = process.env.OPENSHIFT_MONGODB_DB_HOST;
+var OPENSHIFT_MONGODB_DB_PORT = process.env.OPENSHIFT_MONGODB_DB_PORT;
+
+// wikipedia stuff
 var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
 var RAND_PARAMS = {
     'action':'query',
@@ -17,18 +24,19 @@ var DESTINATIONS = {
     'hitler': {
         'destination': 'Adolf Hitler',
         'dest_alt': 'Hitler',
-        'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler',
+        //'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler',
         'db_name':'hitler_paths'
     },
     'jesus': {
         'destination': 'Jesus',
         'dest_alt': 'Jesus Christ',
-        'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*',
+        //'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*',
         'db_name':'jesus_paths'
     }
 };
 
-// get arguments
+/*------ Globals ------*/
+// load arguments, parse destination data
 var start_page = argv['start'];
 var mode = argv['mode'] !== undefined ? argv['mode'] : 'json';
 var max_depth = (argv['depth'] !== undefined)
@@ -37,19 +45,25 @@ var max_depth = (argv['depth'] !== undefined)
 var dest = argv['dest'] !== undefined ? argv['dest'].toLowerCase() : 'hitler';
 
 if (DESTINATIONS[dest] === undefined) {
-    process.stdout.write('BAD_DEST_ERROR');
+    process.stdout.write('[\"BAD_DEST_ERROR\"]');
     process.exit();
 }
 var destination = DESTINATIONS[dest]['destination'];
 var dest_alt = DESTINATIONS[dest]['dest_alt'];
-var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex'], 'i');
+// var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex'], 'i');
 var db_coll = DESTINATIONS[dest]['db_name'];
 
-var db_url = 'mongodb://localhost:27017/dutabus';
+// var db_url = 'mongodb://localhost:27017/dutabus';
+
+// var db_url = 'mongodb://admin:DBRmN8X4gxFN@' + OPENSHIFT_MONGODB_DB_HOST + ':' + OPENSHIFT_MONGODB_DB_PORT + '/hitlerpedia';
+var db_url = 'mongodb://admin:icCmxr6TMtgV@' + OPENSHIFT_MONGODB_DB_HOST + ':' + OPENSHIFT_MONGODB_DB_PORT + '/jesuspedia';
 
 var visitedPages = [];
 var found_hitler = false;
 
+/* ---------------------------------------------------
+*   insert a path and its sub-paths into the database
+*  --------------------------------------------------*/
 var insertIntoDatabase = function(path, db, callback) {
     var listToAdd = [];
     for (var a in path) {
@@ -67,21 +81,22 @@ var insertIntoDatabase = function(path, db, callback) {
     });
 };
 
+/* ---------------------------------------------------
+*   start the first link fetch
+*  --------------------------------------------------*/
 var launch = function(title, db, customTitle) {
     if (mode === 'cmdline') {
         console.log('Starting page is: ' + title);
         console.log('Thinking...');
     }
     visitedPages.push(title);
-    // if we get the ending page as the start page... well we're done aren't we?
-    if (dest_regex.test(title)) {
-        printResults([destination]);
-        db.close();
-        process.exit();
-    }
     getLinks(title, max_depth, [], customTitle, db);
 };
 
+/* ---------------------------------------------------
+*   get a random page if none was specified, then
+*   go to launch()
+*  --------------------------------------------------*/
 var getStartingPage = function(title, db) {
     if (title) {
         launch(title, db, true);
@@ -94,15 +109,22 @@ var getStartingPage = function(title, db) {
     }
 };
 
+/* ---------------------------------------------------
+*   build the parameter object for fetching links
+*  --------------------------------------------------*/
 var buildParams = function(title) {
     return {
         'action':'parse',
         'page':title,
         'prop':'links',
-        'format':'json'
+        'format':'json',
+        'redirects':'true'
     };
 };
 
+/* ---------------------------------------------------
+*   parse title from returned object
+*  --------------------------------------------------*/
 var parseTitle = function(obj) {
     if (obj.error && obj.error.code === 'missingtitle') {
         return false;
@@ -110,38 +132,26 @@ var parseTitle = function(obj) {
     return obj.parse.title;
 };
 
-var parseLinks = function(obj, redirect_check) {
+/* ---------------------------------------------------
+*   parse links from returned object
+*   if redirect_check==true, detect whether the
+*   link is a redirect, then return true/false
+*  --------------------------------------------------*/
+var parseLinks = function(obj) {
     var namespace = 0;
     links_raw = obj.parse.links;
     links = links_raw.filter(function(f) {
-        if (!redirect_check) {
-            return (f['ns'] === namespace && f['exists'] !== undefined);
-        } else {
-            return (f['exists'] !== undefined);
-        }
+        return (f['ns'] === namespace && f['exists'] !== undefined);
     }).map(function(m){
         return m['*'];
     });
 
-    if (!redirect_check) {
-        return links;
-    }
-    else {
-        return ((links.indexOf('Template:R from modification') !== -1)
-            || (links.indexOf('Template:R from long name') !== -1)
-            || (links.indexOf('Template:R from short name') !== -1)
-            || (links.indexOf('Template:R from other capitalisation') !== -1)
-            || (links.indexOf('Template:R from plural') !== -1)
-            || (links.indexOf('Template:R from incorrect name') !== -1)
-            || (links.indexOf('Category:Redirects from other capitalisations') !== -1)
-            || (links.indexOf('Category:Redirects from surnames') !== -1)
-            || (links.indexOf('Category:Redirects from alternative names') !== -1)
-            || (links.indexOf('Category:Redirects from modifications') !== -1)
-            || (links.indexOf('Wikipedia:Common names') !== -1)
-            || (links.indexOf('Wikipedia:Piped link') !== -1))
-    }
+    return links;
 };
 
+/* ---------------------------------------------------
+*   print path array to stdout
+*  --------------------------------------------------*/
 var printResults = function(results) {
     if (mode === 'cmdline') {
         res_str = '(START) ';
@@ -164,18 +174,33 @@ var printResults = function(results) {
     }
 };
 
+/* ---------------------------------------------------
+*   this is where the magic happens
+*   given a title, find all the links on the 
+*   wikipedia page that belongs to that title
+*   --> recursively calls itself with the links on
+*       each page until it finds the destination
+*  --------------------------------------------------*/
 var getLinks = function(title, depth, path, customTitle, db) {
+    // get wikipedia on the phone
     request.get({url:WIKIPEDIA_API_URL, qs:buildParams(title)}, function(error, response, body) {
         if (!error && response.statusCode == 200) {
             jsonData = JSON.parse(body);
 
             if (customTitle) {
                 // title could have underscores or improper capitalization, so get it from api data
-                fixed_title = parseTitle(jsonData);
+                var fixed_title = parseTitle(jsonData);
                 // fix 'visited' array too
                 visitedPages[visitedPages.indexOf(title)] = fixed_title;
             } else {
-                fixed_title = title;
+                var fixed_title = title;
+            }
+
+            // check if we were given our destination
+            if (fixed_title === destination) {
+                printResults([destination]);
+                db.close();
+                process.exit();
             }
 
             if (!fixed_title) {
@@ -184,39 +209,22 @@ var getLinks = function(title, depth, path, customTitle, db) {
                     console.log('ERROR: Page \"' + title + '\" does not exist');
                 }
                 if (mode === 'json') {
-                    process.stdout.write('NO_EXIST_ERROR');
+                    process.stdout.write('[\"NO_EXIST_ERROR\"]');
                 }
                 process.exit();
             }
 
-            // if a custom start was given, on the first page 
-            //  do redirect check before pushing to the path
-            new_path = path.slice();
+            // copy the incoming path arg
+            var new_path = path.slice();
+            new_path.push(fixed_title);
 
-            db.collection(db_coll).find({'start':fixed_title}, function (err, cursor) {
-                cursor.toArray(function(err, results) {
-                    if (results.length > 0 && !found_hitler) {
-                        // make sure we don't beat the regular path here, check for found flag
-                        //  otherwise may get dupe output
-                        cur_path = path.slice();
-                        db_path = results[0]['path'];
-                        fin_path = cur_path.concat(db_path);
-                        printResults(fin_path);
-                        db.close();
-                        process.exit();
-                    }
-                });
-            });
+            // get them links
+            links = parseLinks(jsonData);
+            // add the current page to links for db searching -- won't affect
+            //  getLinks() since it checks against the 'visited' list
+            links.push(fixed_title);
 
-            if (depth === max_depth && customTitle && parseLinks(jsonData, true)) {
-                // don't add to path because this is a redirect
-            } else {
-                new_path.push(fixed_title);
-            }
-            
-            // pull links out
-            links = parseLinks(jsonData, false);
-            
+            // check for our destination first
             if (links.indexOf(destination) !== -1 || links.indexOf(dest_alt) !== -1) {
                 new_path.push(destination);
                 found_hitler = true;
@@ -230,13 +238,58 @@ var getLinks = function(title, depth, path, customTitle, db) {
             // if we start on a dead end page (no links), abort
             if (links.length === 0) {
                 if (depth === max_depth) {
-                    process.stdout.write('DEAD_END_ERROR');
+                    process.stdout.write('[\"DEAD_END_ERROR\"]');
                     db.close();
                     process.exit();
                 }
                 return;
             }
 
+            // check the links on this page against the db
+            db.collection(db_coll).find({'start': {$in: links}}, function (err, cursor) {
+                cursor.toArray(function(err, results) {
+                    // make sure we don't beat the regular path here, check for found flag
+                    //  otherwise may get dupe output
+                    if (results && results.length > 0 && !found_hitler) {
+                        
+                        // copy the incoming path arg
+                        var new_path_db = path.slice();
+                        // add the current page
+                        new_path_db.push(fixed_title);
+                        
+                        // check for links 1 step away from destination (path length 2)
+                        for (var r in results) {
+                            if (results[r]['start'] === fixed_title && new_path_db.length === 1) {
+                                // we're on the first page, and we found a saved path
+                                var bingo_path = results[r]['path'];
+                                break;
+                            } else if (results[r]['path'].length === 2) {
+                                // what we want is on the next page, so let's take this
+                                var last_path = results[r]['path'];
+                            }
+                        }
+                        
+                        if (bingo_path) {
+                            // our path is in the DB, let's roll
+                            new_path_db = bingo_path;
+                        }
+                        if (last_path && !bingo_path) {
+                            // add where we are to the 1-stepper
+                            new_path_db = new_path_db.concat(last_path);
+                        }       
+                        if (bingo_path || last_path) {
+                            // we have stuff in the DB, git r dun          
+                            printResults(new_path_db);
+                            insertIntoDatabase(new_path_db, db, function() {
+                                db.close();
+                                process.exit();
+                            });
+                        }
+                    }
+                });
+            });
+
+            // go through the links on the page
             for (var l in links) {
                 if (depth > 0) {
                     if (visitedPages.indexOf(links[l]) === -1 && !found_hitler) {
@@ -250,7 +303,7 @@ var getLinks = function(title, depth, path, customTitle, db) {
                         console.log('ERROR: Maximum depth exceeded (Max depth = ' + max_depth + ')');
                     }
                     if (mode === 'json') {
-                        process.stdout.write('MAX_DEPTH_ERROR');
+                        process.stdout.write('[\"MAX_DEPTH_ERROR\"]');
                     }
                     db.close();
                     process.exit();
@@ -271,10 +324,10 @@ var main = function() {
     MongoClient.connect(db_url, function(err, db) {
         assert.equal(null, err);
         if (err) {
-            console.log(err);
+            process.stdout.write('[\"DB_ERROR\"]')
             process.exit();
         }
-        db.collection(db_coll).ensureIndex( { 'start': 1 }, { 'unique': true } )
+        db.collection(db_coll).ensureIndex({'start': 1}, {'unique': true});
         getStartingPage(start_page, db);
     });
 };

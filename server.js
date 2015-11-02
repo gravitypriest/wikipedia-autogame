@@ -4,6 +4,7 @@ var express = require('express');
 var fs      = require('fs');
 var child_process = require('child_process');
 var url = require("url");
+var path = require('path');
 
 /**
  *  Define the sample application.
@@ -44,7 +45,7 @@ var SampleApp = function() {
         }
 
         //  Local cache for static content.
-        self.zcache['index.html'] = fs.readFileSync('./index.html');
+        self.zcache['index.html'] = fs.readFileSync('./app/index.html');
     };
 
 
@@ -88,7 +89,6 @@ var SampleApp = function() {
     self.doFind = function(destination, req, res) {
         console.log('Find request initiated...');
         res.setHeader('Content-Type', 'application/json');
-        var full_path = '';
         var args = [];
         var query = url.parse(req.url, true).query
 
@@ -125,16 +125,7 @@ var SampleApp = function() {
     self.createRoutes = function() {
         self.routes = { };
 
-        self.routes['/asciimo'] = function(req, res) {
-            var link = "http://i.imgur.com/kmbjB.png";
-            res.send("<html><body><img src='" + link + "'></body></html>");
-        };
-
-        self.routes['/find-hitler'] = function(req, res) {
-            self.doFind('hitler', req, res);
-        };
-
-        self.routes['/find-jesus'] = function(req, res) {
+        self.routes['/find'] = function(req, res) {
             self.doFind('jesus', req, res);
         };
 
@@ -151,8 +142,10 @@ var SampleApp = function() {
      */
     self.initializeServer = function() {
         self.createRoutes();
-        self.app = express.createServer();
-
+        self.app = express();
+        self.app.use(express.static(path.join(__dirname, '/app')));
+        self.app.use('/bower_components', express.static(path.join(__dirname, '/bower_components')));
+        self.app.use(express.favicon(path.join(__dirname, 'app', 'favicon-jesus.ico')));
         //  Add handlers for the app (from the routes).
         for (var r in self.routes) {
             self.app.get(r, self.routes[r]);

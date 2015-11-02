@@ -1,0 +1,122 @@
+<div class="jumbotron">
+  <img src="images/icon-jesus.png" style="width:120px; height:120px"/>
+  <h1>Jesuspedia</h1>
+  <p><small>Find the shortest route to Jesus from any Wikipedia page.</small></p>
+    <div class="row" ng-if='currentMode === Mode.START'>
+      <div class="col-sm-12">
+        <div class="row">
+          <div class="col-sm-7">
+            <div class="form-group" ng-class='{"has-error": badLink}'>
+              <input type="text" class="form-control" id="custompage" ng-model='custompage.text' placeholder="Wikipedia link or page title">
+              <span class='help-block' ng-show='badLink'>Please enter a valid Wikipedia link!</span>
+            </div>
+          </div>
+          <div class="col-sm-2">
+            <a class="btn btn-success form-control" ng-click='fetchWikiPath(custompage.text)' 
+            ng-disabled='custompage.text === "" || custompage.text === undefined'>Go!</a>
+          </div>
+          <div class="col-sm-3">
+            <a class="btn btn-danger form-control" ng-click="fetchWikiPath()">Random page!</a>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col-sm-12">
+            <div class='alert alert-danger alert-dismissible' ng-show='noExistError'><strong>Oops!</strong> The page you asked for doesn't exist.
+              <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+            </div>            
+            <div class='alert alert-danger alert-dismissible' ng-show='someError'><strong>Oops!</strong> Something went wrong. Please try again later.
+              <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+            </div>            
+            <div class='alert alert-danger alert-dismissible' ng-show='maxDepthError'><strong>Oops!</strong> The distance to Hitler is too many links away.  How about <a href='mailto:craftsje@gmail.com?subject=Hitlerpedia depth maxed out' class='alert-link'>reporting it?</a>
+              <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  <div class="row" ng-if='currentMode === Mode.INPROGRESS'>
+    <div class='col-sm-12'>
+      <h2>Just a minute...</h2>
+    </div>
+    <div class="mask-loading col-sm-12">
+      <div class="spinner">
+        <div class="double-bounce1"></div>
+        <div class="double-bounce2"></div>
+      </div>
+    </div>
+    <div class='col-sm-12'>
+    <p>Jesuspedia is thinking hard!</p>
+    </div>
+  </div>
+  <div class="row" ng-if='currentMode === Mode.FOUND'>
+    <div class='col-sm-12'>
+      <div class='row'>
+        <div class='col-sm-12'>
+          <h2 class='foundheading'>Jesus Found!</h2>
+        </div>
+      </div>
+      <div class='row results'>
+        <div class='col-sm-8 text-left'>
+          <div class="row" ng-repeat="page in finalPath track by $index">
+            <div class='col-sm-12'> 
+              <span ng-if='$index === 0'>Start: </span>
+              <span ng-if='$index !== 0'>Step {{$index}}: </span>       
+              <strong><a href='{{page.link}}'>{{page.title}}</a></strong>
+            </div>
+          </div>
+          <div class="row">
+            <div class='col-sm-12'> 
+            <span>Finished!</span>
+            </div>
+          </div>
+        </div>
+        <div class='col-sm-4'>
+          <div class='row'>
+            <div class='col-sm-12'>
+            Found in
+            </div>
+          </div>
+          <div class='row'>
+            <div class='col-sm-12 results-num'>
+              <strong>{{finalPath.length-1}}</strong>
+            </div>
+          </div>
+          <div class='row'>
+            <div class='col-sm-12'>
+            step(s)
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class='row'>
+        <div class = 'form-group'>
+          <div class='col-sm-3'>   
+          </div>
+          <div class='col-sm-6'>
+            <a class="btn btn-primary" ng-click="resetPage()">Start Over</a>
+            <span>&nbsp;or check out <strong><a href="http://www.hitlerpedia.co">Hitlerpedia</a></strong></span>
+          </div>
+          <div class='col-sm-3'>
+        </div>     
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+<div class="row" ng-if='currentMode === Mode.START'>
+  <div class="col-sm-12">
+  <h4>What is this?</h4>
+  <blockquote>
+    <p>
+      '<b>5-Clicks-to-Jesus</b>': A form of Wikiracing that mimics golf, the challenge in this version is to get from a Random Article to the Jesus entry in as few clicks as possible. Reaching the article in 5 clicks is considered 'par', with clicks over or under five being referred to as 'bogeys' and 'birdies' respectively. Players can either play the course (aiming for 'par' or better) or as a competition. In the latter case, players start from the same Random Articles and add their score between rounds. Lowest score wins!
+    </p>
+    <footer><a href="https://en.wikipedia.org/wiki/Wikipedia:Wiki_Game">Wikipedia "Wiki Game"</a></footer>
+  </blockquote>
+  </p>
+  </div>
+</div>
+<script>
+  var o = 100;
+  $(".mask-loading").css("height", o);
+  $(".spinner").css("top", (o / 2)-30);
+</script>
