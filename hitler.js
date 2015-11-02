@@ -1,5 +1,7 @@
 var request = require('request');
 var argv = require('minimist')(process.argv.slice(2));
+var MongoClient = require('mongodb').MongoClient;
+var assert = require('assert');
 
 var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
 var RAND_PARAMS = {
@@ -15,12 +17,14 @@ var DESTINATIONS = {
     'hitler': {
         'destination': 'Adolf Hitler',
         'dest_alt': 'Hitler',
-        'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler'
+        'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler',
+        'db_name':'hitler_paths'
     },
     'jesus': {
         'destination': 'Jesus',
         'dest_alt': 'Jesus Christ',
-        'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*'
+        'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*',
+        'db_name':'jesus_paths'
     }
 };
 
@@ -39,11 +43,31 @@ if (DESTINATIONS[dest] === undefined) {
 var destination = DESTINATIONS[dest]['destination'];
 var dest_alt = DESTINATIONS[dest]['dest_alt'];
 var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex'], 'i');
+var db_coll = DESTINATIONS[dest]['db_name'];
+
+var db_url = 'mongodb://localhost:27017/dutabus';
 
 var visitedPages = [];
 var found_hitler = false;
 
-var launch = function(title, customTitle) {
+var insertIntoDatabase = function(path, db, callback) {
+    var listToAdd = [];
+    for (var a in path) {
+        var p = path.slice(a, path.length);
+        var obj = {'start':p[0],
+                   'path':p};
+        listToAdd.push(obj);
+    }
+    db.collection(db_coll).insert(listToAdd, function(err, result) {
+        if (err && err['code'] !== 11000) {
+            // ignore duplicate keys
+            assert.equal(err,null);
+        }
+        callback(result);
+    });
+};
+
+var launch = function(title, db, customTitle) {
     if (mode === 'cmdline') {
         console.log('Starting page is: ' + title);
         console.log('Thinking...');
@@ -52,19 +76,20 @@ var launch = function(title, customTitle) {
     // if we get the ending page as the start page... well we're done aren't we?
     if (dest_regex.test(title)) {
         printResults([destination]);
+        db.close();
         process.exit();
     }
-    getLinks(title, max_depth, [], customTitle);
+    getLinks(title, max_depth, [], customTitle, db);
 };
 
-var getStartingPage = function(title) {
+var getStartingPage = function(title, db) {
     if (title) {
-        launch(title, true);
+        launch(title, db, true);
     } else {
         request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
             var obj = JSON.parse(body);
             title = obj.query.random[0].title;
-            launch(title, false);
+            launch(title, db, false);
         });
     }
 };
@@ -139,7 +164,7 @@ var printResults = function(results) {
     }
 };
 
-var getLinks = function(title, depth, path, customTitle) {
+var getLinks = function(title, depth, path, customTitle, db) {
     request.get({url:WIKIPEDIA_API_URL, qs:buildParams(title)}, function(error, response, body) {
         if (!error && response.statusCode == 200) {
             jsonData = JSON.parse(body);
@@ -167,6 +192,22 @@ var getLinks = function(title, depth, path, customTitle) {
             // if a custom start was given, on the first page 
             //  do redirect check before pushing to the path
             new_path = path.slice();
+
+            db.collection(db_coll).find({'start':fixed_title}, function (err, cursor) {
+                cursor.toArray(function(err, results) {
+                    if (results.length > 0 && !found_hitler) {
+                        // make sure we don't beat the regular path here, check for found flag
+                        //  otherwise may get dupe output
+                        cur_path = path.slice();
+                        db_path = results[0]['path'];
+                        fin_path = cur_path.concat(db_path);
+                        printResults(fin_path);
+                        db.close();
+                        process.exit();
+                    }
+                });
+            });
+
             if (depth === max_depth && customTitle && parseLinks(jsonData, true)) {
                 // don't add to path because this is a redirect
             } else {
@@ -180,13 +221,17 @@ var getLinks = function(title, depth, path, customTitle) {
                 new_path.push(destination);
                 found_hitler = true;
                 printResults(new_path);
-                process.exit();
+                insertIntoDatabase(new_path, db, function() {
+                    db.close();
+                    process.exit();
+                });
             }
 
             // if we start on a dead end page (no links), abort
             if (links.length === 0) {
                 if (depth === max_depth) {
                     process.stdout.write('DEAD_END_ERROR');
+                    db.close();
                     process.exit();
                 }
                 return;
@@ -198,7 +243,7 @@ var getLinks = function(title, depth, path, customTitle) {
                         // add to the 'visited' array early to avoid waiting for the req
                         //  to finish before adding, avoid dupes
                         visitedPages.push(links[l]);
-                        getLinks(links[l], depth-1, new_path, customTitle);
+                        getLinks(links[l], depth-1, new_path, customTitle, db);
                     }
                 } else {
                     if (mode === 'cmdline') {
@@ -207,6 +252,7 @@ var getLinks = function(title, depth, path, customTitle) {
                     if (mode === 'json') {
                         process.stdout.write('MAX_DEPTH_ERROR');
                     }
+                    db.close();
                     process.exit();
                 }
             } 
@@ -222,7 +268,15 @@ var main = function() {
     if (start_page) {
         ('Start page specified!');
     }
-    getStartingPage(start_page);
+    MongoClient.connect(db_url, function(err, db) {
+        assert.equal(null, err);
+        if (err) {
+            console.log(err);
+            process.exit();
+        }
+        db.collection(db_coll).ensureIndex( { 'start': 1 }, { 'unique': true } )
+        getStartingPage(start_page, db);
+    });
 };
 
 if(require.main === module) {
