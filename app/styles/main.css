@@ -1,12 +1,19 @@
-.browsehappy {
-  margin: 0.2em 0;
-  background: #ccc;
-  color: #000;
-  padding: 0.2em 0;
+div:not(.alert), span:not(.closebtn), small {
+  color:#ccc;
 }
 
-body {
-  padding: 0;
+.pediaalert {
+  margin-top: 20px;
+}
+
+.banner {
+  padding-top:10px;
+  padding-bottom: 10px;
+  text-align: center;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  background-image:url('../images/flag3.jpg');
+  background-size:100%;
 }
 
 blockquote {
@@ -159,4 +166,10 @@ blockquote {
     transform: scale(1.0);
     -webkit-transform: scale(1.0);
   }
+}
+
+.trump {
+  font-family: Georgia, serif;
+  color: #fff !important;
+  text-shadow: 1px 1px #000;
 }

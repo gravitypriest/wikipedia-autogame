@@ -24,7 +24,7 @@
     "mongodb": ">=2.0.47"
   },
   "scripts": {
-    "postinstall": "HOME=$HOME/app-root/runtime/repo; bower install"
+    "postinstall": "HOME=$HOME/app-root/runtime/repo; npm install bower; bower install"
   },
   "private": true,
   "main": "server.js"
