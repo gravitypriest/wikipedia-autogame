@@ -1,15 +1,12 @@
-/*------ Imports ------*/
+// imports
 var request = require('request');
-var argv = require('minimist')(process.argv.slice(2));
 var MongoClient = require('mongodb').MongoClient;
 var assert = require('assert');
+var _ = require('lodash');
+var argv = require('minimist')(process.argv.slice(2));
+var config = require('./config');
 
-/*------ Constants ------*/
-// openshift DB vars
-var OPENSHIFT_MONGODB_DB_HOST = process.env.OPENSHIFT_MONGODB_DB_HOST;
-var OPENSHIFT_MONGODB_DB_PORT = process.env.OPENSHIFT_MONGODB_DB_PORT;
-
-// wikipedia stuff
+// constants
 var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
 var RAND_PARAMS = {
     'action':'query',
@@ -20,98 +17,78 @@ var RAND_PARAMS = {
     'format':'json'
 };
 
-var DESTINATIONS = {
-    'hitler': {
-        'destination': 'Adolf Hitler',
-        'dest_alt': 'Hitler',
-        //'dest_regex': '(?:(?:adolf)*[_\\ ]+)*hitler',
-        'db_name':'hitler_paths'
-    },
-    'jesus': {
-        'destination': 'Jesus',
-        'dest_alt': 'Jesus Christ',
-        //'dest_regex': 'jesus(?:[_\\ ]+(?:christ)*)*',
-        'db_name':'jesus_paths'
-    }
-};
-
-/*------ Globals ------*/
-// load arguments, parse destination data
-var start_page = argv['start'];
-var mode = argv['mode'] !== undefined ? argv['mode'] : 'json';
-var max_depth = (argv['depth'] !== undefined)
-             && (typeof argv['depth'] === 'number')
-             && (argv['depth'] % 1 === 0) ? argv['depth'] : 4;
-var dest = argv['dest'] !== undefined ? argv['dest'].toLowerCase() : 'hitler';
-
-if (DESTINATIONS[dest] === undefined) {
-    process.stdout.write('[\"BAD_DEST_ERROR\"]');
-    process.exit();
-}
-var destination = DESTINATIONS[dest]['destination'];
-var dest_alt = DESTINATIONS[dest]['dest_alt'];
-// var dest_regex = new RegExp(DESTINATIONS[dest]['dest_regex'], 'i');
-var db_coll = DESTINATIONS[dest]['db_name'];
-
-// var db_url = 'mongodb://localhost:27017/dutabus';
-
-// var db_url = 'mongodb://admin:DBRmN8X4gxFN@' + OPENSHIFT_MONGODB_DB_HOST + ':' + OPENSHIFT_MONGODB_DB_PORT + '/hitlerpedia';
-var db_url = 'mongodb://admin:icCmxr6TMtgV@' + OPENSHIFT_MONGODB_DB_HOST + ':' + OPENSHIFT_MONGODB_DB_PORT + '/jesuspedia';
-
-var visitedPages = [];
+// globals
+var db;
+var dbUrl = config.dbUrl;
+var dbName = config.dbName;
+var dbColl = config.dbColl;
+var destination = config.destination;
+var destAlt = config.destAlt;
+var maxDepth = config.maxDepth;
+var seenPages = [];
+var pageQueue = [];
+var depth = 0;
 var found_hitler = false;
+var startPage = argv['start'];
 
-/* ---------------------------------------------------
-*   insert a path and its sub-paths into the database
-*  --------------------------------------------------*/
-var insertIntoDatabase = function(path, db, callback) {
+// add a path to db
+var insertIntoDatabase = function(path, callback) {
     var listToAdd = [];
     for (var a in path) {
         var p = path.slice(a, path.length);
         var obj = {'start':p[0],
-                   'path':p};
+                   'path':p,
+                   'rank':p.length-1};
         listToAdd.push(obj);
     }
-    db.collection(db_coll).insert(listToAdd, function(err, result) {
-        if (err && err['code'] !== 11000) {
-            // ignore duplicate keys
-            assert.equal(err,null);
+    if (db.serverConfig.isConnected()) {
+        db.collection(dbColl).insert(listToAdd, function(err, result) {
+            callback();
+        });
+    } else {
+        callback();
+    }
+};
+
+var printResults = function(results) {
+    process.stdout.write(JSON.stringify(results))
+};
+
+var depthComplete = function() {
+    // all links of a depth gathered, check DB
+    var solved_path;
+    var bottomLvlLinks = pageQueue[depth+1].map(function(m) {
+        return m[m.length-1];
+    });
+    db.collection(dbColl).find({'start': {$in: bottomLvlLinks}})
+                         .sort({'rank': 1})
+                         .toArray(function(err, results) {
+        if (results && results.length > 0) {
+            found_hitler = true;
+            // get the found path (path we found by GETs)
+            var idx = bottomLvlLinks.indexOf(results[0].start);
+            var foundPath = pageQueue[depth+1][idx];
+            // remove the last element since it's how the DB entry starts
+            foundPath.pop();
+            // add the two paths together
+            solved_path = foundPath.concat(results[0].path);
+            // save the newly found path              
+            insertIntoDatabase(solved_path, function() {
+                if (db.serverConfig.isConnected()) {
+                    printResults(solved_path);
+                    db.close();
+                }
+                process.exit();
+            });
+        } else {
+            depth++;
+            var nextPath = pageQueue[depth][0]
+            var nextTitle = nextPath[nextPath.length-1];
+            getLinks(nextTitle, nextPath, false);
         }
-        callback(result);
     });
 };
 
-/* ---------------------------------------------------
-*   start the first link fetch
-*  --------------------------------------------------*/
-var launch = function(title, db, customTitle) {
-    if (mode === 'cmdline') {
-        console.log('Starting page is: ' + title);
-        console.log('Thinking...');
-    }
-    visitedPages.push(title);
-    getLinks(title, max_depth, [], customTitle, db);
-};
-
-/* ---------------------------------------------------
-*   get a random page if none was specified, then
-*   go to launch()
-*  --------------------------------------------------*/
-var getStartingPage = function(title, db) {
-    if (title) {
-        launch(title, db, true);
-    } else {
-        request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
-            var obj = JSON.parse(body);
-            title = obj.query.random[0].title;
-            launch(title, db, false);
-        });
-    }
-};
-
-/* ---------------------------------------------------
-*   build the parameter object for fetching links
-*  --------------------------------------------------*/
 var buildParams = function(title) {
     return {
         'action':'parse',
@@ -122,9 +99,7 @@ var buildParams = function(title) {
     };
 };
 
-/* ---------------------------------------------------
-*   parse title from returned object
-*  --------------------------------------------------*/
+// parse title from returned object
 var parseTitle = function(obj) {
     if (obj.error && obj.error.code === 'missingtitle') {
         return false;
@@ -132,11 +107,7 @@ var parseTitle = function(obj) {
     return obj.parse.title;
 };
 
-/* ---------------------------------------------------
-*   parse links from returned object
-*   if redirect_check==true, detect whether the
-*   link is a redirect, then return true/false
-*  --------------------------------------------------*/
+// parse links from returned object
 var parseLinks = function(obj) {
     var namespace = 0;
     links_raw = obj.parse.links;
@@ -149,191 +120,140 @@ var parseLinks = function(obj) {
     return links;
 };
 
-/* ---------------------------------------------------
-*   print path array to stdout
-*  --------------------------------------------------*/
-var printResults = function(results) {
-    if (mode === 'cmdline') {
-        res_str = '(START) ';
-        for (var i in results) {
-            if (i > 0 && i < (results.length)) {
-                res_str = res_str + ' --' + i + '--> ';
-            }
-            res_str = res_str + results[i];
-        }
-        res_str = res_str + ' (FINISH)';
-        console.log('HITLER FOUND!')
-        console.log('=============================================');
-        console.log(res_str);
-        console.log('---------------------------------------------');
-        console.log('Found in ' + (results.length-1) + ' step(s).');
-        console.log('=============================================');
-    }
-    if (mode === 'json') {
-        process.stdout.write(JSON.stringify(results))
+var launch = function() {
+    if (startPage) {
+        getLinks(startPage, [], true);
+    } else {
+        request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
+            var obj = JSON.parse(body);
+            var title = obj.query.random[0].title;
+            getLinks(title, [], true);
+        });
     }
 };
 
-/* ---------------------------------------------------
-*   this is where the magic happens
-*   given a title, find all the links on the 
-*   wikipedia page that belongs to that title
-*   --> recursively calls itself with the links on
-*       each page until it finds the destination
-*  --------------------------------------------------*/
-var getLinks = function(title, depth, path, customTitle, db) {
-    // get wikipedia on the phone
-    request.get({url:WIKIPEDIA_API_URL, qs:buildParams(title)}, function(error, response, body) {
+var getStartingPage = function(title) {
+    if (title) {
+        // start page was specified
+        launch(title, [], true);
+    } else {
+        // get random page
+        request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
+            var obj = JSON.parse(body);
+            title = obj.query.random[0].title;
+            launch(title, [], true);
+        });
+    }
+};
+
+var getLinks = function(title, inPath, isFirstPage) {
+    request.get({url:WIKIPEDIA_API_URL,
+                 qs:buildParams(title),
+                 timeout:5000,
+                 headers: {
+                'User-Agent': 'Trumpedia (http://trumpedia.net)'}},
+             function(error, response, body) {
         if (!error && response.statusCode == 200) {
             jsonData = JSON.parse(body);
-
-            if (customTitle) {
+            var new_path = inPath.slice();
+            if (isFirstPage) {
                 // title could have underscores or improper capitalization, so get it from api data
-                var fixed_title = parseTitle(jsonData);
-                // fix 'visited' array too
-                visitedPages[visitedPages.indexOf(title)] = fixed_title;
-            } else {
-                var fixed_title = title;
+                title = parseTitle(jsonData);
+                seenPages.push(title);
+                pageQueue[0] = [title];
+                new_path.push(title);
             }
-
             // check if we were given our destination
-            if (fixed_title === destination) {
-                printResults([destination]);
-                db.close();
+            if (title === destination || title === destAlt) {                
+                if (db.serverConfig.isConnected()) {
+                    printResults([destination]);
+                    db.close();
+                }
                 process.exit();
             }
 
-            if (!fixed_title) {
+            if (!title) {
                 // page doesn't exist
-                if (mode === 'cmdline') {
-                    console.log('ERROR: Page \"' + title + '\" does not exist');
-                }
-                if (mode === 'json') {
-                    process.stdout.write('[\"NO_EXIST_ERROR\"]');
+                process.stdout.write('[\"NO_EXIST_ERROR\"]');
+                if (db.serverConfig.isConnected()) {
+                    db.close();
                 }
                 process.exit();
             }
 
-            // copy the incoming path arg
-            var new_path = path.slice();
-            new_path.push(fixed_title);
-
-            // get them links
-            links = parseLinks(jsonData);
-            // add the current page to links for db searching -- won't affect
-            //  getLinks() since it checks against the 'visited' list
-            links.push(fixed_title);
-
+            var links = parseLinks(jsonData);
             // check for our destination first
-            if (links.indexOf(destination) !== -1 || links.indexOf(dest_alt) !== -1) {
+            if (links.indexOf(destination) > -1 || links.indexOf(destAlt) > -1) {
                 new_path.push(destination);
                 found_hitler = true;
-                printResults(new_path);
-                insertIntoDatabase(new_path, db, function() {
-                    db.close();
+                insertIntoDatabase(new_path, function() {
+                    if (db.serverConfig.isConnected()) {
+                        printResults(new_path);    
+                        db.close();
+                    }
                     process.exit();
                 });
+                return;
             }
 
-            // if we start on a dead end page (no links), abort
             if (links.length === 0) {
-                if (depth === max_depth) {
+                if (depth === 0) {
                     process.stdout.write('[\"DEAD_END_ERROR\"]');
-                    db.close();
+                    if (db.serverConfig.isConnected()) {
+                        db.close();
+                    }
                     process.exit();
                 }
                 return;
             }
 
-            // check the links on this page against the db
-            db.collection(db_coll).find({'start': {$in: links}}, function (err, cursor) {
-                cursor.toArray(function(err, results) {
-                    // make sure we don't beat the regular path here, check for found flag
-                    //  otherwise may get dupe output
-                    if (results && results.length > 0 && !found_hitler) {
-                        
-                        // copy the incoming path arg
-                        var new_path_db = path.slice();
-                        // add the current page
-                        new_path_db.push(fixed_title);
-                        
-                        // check for links 1 step away from destination (path length 2)
-                        for (var r in results) {
-                            if (results[r]['start'] === fixed_title && new_path_db.length === 1) {
-                                // we're on the first page, and we found a saved path
-                                var bingo_path = results[r]['path'];
-                                break;
-                            } else if (results[r]['path'].length === 2) {
-                                // what we want is on the next page, so let's take this
-                                var last_path = results[r]['path'];
-                            }
-                        }
-                        
-                        if (bingo_path) {
-                            // our path is in the DB, let's roll
-                            new_path_db = bingo_path;
-                        }
-                        if (last_path && !bingo_path) {
-                            // add where we are to the 1-stepper
-                            new_path_db = new_path_db.concat(last_path);
-                        }       
-                        if (bingo_path || last_path) {
-                            // we have stuff in the DB, git r dun          
-                            printResults(new_path_db);
-                            insertIntoDatabase(new_path_db, db, function() {
-                                db.close();
-                                process.exit();
-                            });
-                        }
-                    }
-                });
-            });
-
-            // go through the links on the page
-            for (var l in links) {
-                if (depth > 0) {
-                    if (visitedPages.indexOf(links[l]) === -1 && !found_hitler) {
-                        // add to the 'visited' array early to avoid waiting for the req
-                        //  to finish before adding, avoid dupes
-                        visitedPages.push(links[l]);
-                        getLinks(links[l], depth-1, new_path, customTitle, db);
-                    }
-                } else {
-                    if (mode === 'cmdline') {
-                        console.log('ERROR: Maximum depth exceeded (Max depth = ' + max_depth + ')');
-                    }
-                    if (mode === 'json') {
-                        process.stdout.write('[\"MAX_DEPTH_ERROR\"]');
-                    }
-                    db.close();
-                    process.exit();
+            // it's not in this page, prepare next depth
+            if (depth < maxDepth) {
+                // initialize next depth
+                if (!pageQueue[depth + 1]) {
+                    pageQueue[depth + 1] = [];
                 }
-            } 
-        }  
+                for (var l in links) {
+                    // add to the next depth queue if not already there
+                    if (pageQueue[depth + 1].indexOf(links[l]) === -1 &&
+                        seenPages.indexOf(links[l]) === -1) {
+                        // copy incoming path --> [A, B]
+                        var link_path = new_path.slice();
+                        // add link to path   --> [A, B, C]
+                        link_path.push(links[l]);
+                        // add path to queue
+                        pageQueue[depth + 1].push(link_path);
+                        seenPages.push(links[l]);
+                    }
+                }
+                // pop the current page from queue
+                pageQueue[depth].splice(0, 1);
+                if (pageQueue[depth].length === 0) {
+                    // reached the end of this depth
+                    depthComplete();
+                } else {
+                    var nextPath = pageQueue[depth][0]
+                    var nextTitle = nextPath[nextPath.length-1];
+                    getLinks(nextTitle, nextPath, false);
+                }
+            }
+        }
     });
 };
 
 var main = function() {
-    if (mode !== 'cmdline' && mode !== 'json') {
-        process.stdout.write('BAD_MODE_ERROR');
-        process.exit();
-    }
-    if (start_page) {
-        ('Start page specified!');
-    }
-    MongoClient.connect(db_url, function(err, db) {
+    MongoClient.connect(dbUrl, function(err, _db) {
         assert.equal(null, err);
         if (err) {
             process.stdout.write('[\"DB_ERROR\"]')
             process.exit();
         }
-        db.collection(db_coll).ensureIndex({'start': 1}, {'unique': true});
-        getStartingPage(start_page, db);
+        db = _db;
+        db.collection(dbColl).ensureIndex({'start': 1}, {'unique': true});
+        launch();
     });
 };
 
 if(require.main === module) {
     main();
 };
-
-
