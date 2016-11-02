@@ -1,10 +1,10 @@
 #!/bin/env node
-//  OpenShift sample Node application
 var express = require('express');
 var fs      = require('fs');
 var child_process = require('child_process');
 var url = require("url");
 var path = require('path');
+var hitler = require('./hitler');
 
 /**
  *  Define the sample application.
@@ -187,4 +187,5 @@ var SampleApp = function() {
 var zapp = new SampleApp();
 zapp.initialize();
 zapp.start();
+
 

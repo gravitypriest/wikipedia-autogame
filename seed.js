@@ -1,21 +1,20 @@
 // imports
+var path_ = require('path');
 var request = require('request');
-var MongoClient = require('mongodb').MongoClient;
 var assert = require('assert');
 var _ = require('lodash');
-var config = require('./config');
+var config = require(path_.join(__dirname, 'config.json'));
+var db = require(path_.join(__dirname, 'model'));
+var Path = db['path'];
 var sleep = require('sleep');
 
 // constants
 var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
 
 // globals
-var db;
-var dbUrl = config.dbUrl;
-var dbColl = config.dbColl;
-var startPage = config.destination;
-var currentDepth = config.startDepth;
-var maxDepth = config.maxSeedDepth;
+var startPage = config.server[config.selected].destination;;
+var currentDepth = 0;
+var maxDepth = 4;
 var seenPages = [];
 var pageQueue = [];
 var retries = 0;
@@ -45,25 +44,22 @@ var removeFromQueue = function(title) {
 // add links to DB
 var insertIntoDatabase = function(links, title, callback) {
     // look if the title has already been added
-    db.collection(dbColl).findOne({'start':title}, function(err, doc) {
-        var listToAdd = [];
-        var basePath = [];
-        if (doc) {
-            basePath = doc.path;
-        }
+    var listToAdd = [];
+    var basePath = [];
+    console.log(title);
 
+    Path.findOne({where: {start: title}, raw: true}).then(function(result) {
+        if (result && result.path) {
+            basePath = JSON.parse(result.path);
+        }
         for (var p in links) {
-            var obj = {'start': links[p],
-                       'path': [links[p]].concat(basePath),
-                       'rank': basePath.length};
+            var obj = {start: links[p],
+                       path: JSON.stringify([links[p]].concat(basePath)),
+                       rank: basePath.length};
             listToAdd.push(obj);
         }
-        db.collection(dbColl).insert(listToAdd, function(err, result) {
-            if (err && err['code'] !== 11000) {
-                // ignore duplicate keys
-                assert.equal(err, null);
-            }
-            callback(result);
+        Path.bulkCreate(listToAdd, {ignoreDuplicates: true}).then(function() {
+            callback();
         });
     });
 };
@@ -194,7 +190,7 @@ var kickstartSeed = function() {
     console.log('Starting depth %d', currentDepth);
     if (currentDepth === maxDepth) {
         console.log('Max depth reached. Let\'s stop here for today.');
-        db.close();
+        db.sequelize.close();
         process.exit();
     }
     getLinksHere(pageQueue[currentDepth][0], 0);
@@ -202,50 +198,24 @@ var kickstartSeed = function() {
 
 var main = function() {
     console.log('Beginning seed...')
-    // init DB connection
-    MongoClient.connect(dbUrl, function(err, _db) {
-        assert.equal(null, err);
-        if (err) {
-            console.log('Something went wrong')
-            process.exit();
-        }
-        db = _db;
-        db.collection(dbColl).ensureIndex({'start': 1}, {'unique': true});
-        // init first level of queue - just our start page
-        if (currentDepth > 0) {
-            // start from a depth other than default
-            // (requires some seeding to have been done)
-            db.collection(dbColl).find({}, function (err, cursor) {
-                cursor.toArray(function(err, results) {
-                    if (results && results.length > 0) {
-                        // initialize total seen pages
-                        seenPages = results.map(function(m) {
-                            return m.start;
-                        });
-                        // initialize page queue
-                        pageQueue[currentDepth] = results.filter(function(f) {
-                            return f.rank === currentDepth;
-                        }).map(function(m) {
-                            return m.start;
-                        });
-                        kickstartSeed();
-                    } else {
-                        console.log('Can\'t seed, no start data.');
-                        process.exit(1);
-                    }
-                });
-            });
-        } else {
+    db.sequelize
+      .authenticate()
+      .then(function(err) {
+        db.sequelize.sync().then(function () {
             pageQueue[currentDepth] = [];
             pageQueue[currentDepth].push(startPage);
             // init with destination
             insertIntoDatabase([startPage], '', function(){
                 // start seeding
-                kickstartSeed();
-            });
-        }
-    });
-};
+                kickstartSeed();            
+        });
+      })
+      .catch(function (err) {
+        console.log(err);
+        process.exit();
+      });
+  });
+}
 
 if(require.main === module) {
     main();

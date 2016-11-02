@@ -1,10 +1,11 @@
 // imports
+var path = require('path');
 var request = require('request');
-var MongoClient = require('mongodb').MongoClient;
-var assert = require('assert');
 var _ = require('lodash');
 var argv = require('minimist')(process.argv.slice(2));
-var config = require('./config');
+var config = require(path.join(__dirname, 'config.json'));
+var db = require(path.join(__dirname, 'model'));
+var Path = db['path'];
 
 // constants
 var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
@@ -18,40 +19,42 @@ var RAND_PARAMS = {
 };
 
 // globals
-var db;
-var dbUrl = config.dbUrl;
-var dbName = config.dbName;
-var dbColl = config.dbColl;
-var destination = config.destination;
-var destAlt = config.destAlt;
-var maxDepth = config.maxDepth;
+var destination = config.server[config.selected].destination;
+var destAlt = config.server[config.selected].dest_alt;
+var maxDepth = config.max_depth;
 var seenPages = [];
 var pageQueue = [];
 var depth = 0;
 var found_hitler = false;
 var startPage = argv['start'];
 
+var exitproc = function() {
+    db.sequelize.close();
+    process.exit();
+}
+
 // add a path to db
-var insertIntoDatabase = function(path, callback) {
+var insertIntoDatabase = function(solved_path, callback) {
     var listToAdd = [];
-    for (var a in path) {
-        var p = path.slice(a, path.length);
-        var obj = {'start':p[0],
-                   'path':p,
-                   'rank':p.length-1};
+    for (var a in solved_path) {
+        var p = solved_path.slice(a, solved_path.length);
+        var obj = {start: p[0],
+                   path: JSON.stringify(p),
+                   rank: p.length-1};
         listToAdd.push(obj);
     }
-    if (db.serverConfig.isConnected()) {
-        db.collection(dbColl).insert(listToAdd, function(err, result) {
-            callback();
-        });
-    } else {
-        callback();
-    }
+    Path.bulkCreate(listToAdd, {ignoreDuplicates: true}).then(callback);
 };
 
 var printResults = function(results) {
     process.stdout.write(JSON.stringify(results))
+};
+
+var goToNextDepth = function() {
+    depth++;
+    var nextPath = pageQueue[depth][0]
+    var nextTitle = nextPath[nextPath.length-1];
+    getLinks(nextTitle, nextPath, false);
 };
 
 var depthComplete = function() {
@@ -60,10 +63,15 @@ var depthComplete = function() {
     var bottomLvlLinks = pageQueue[depth+1].map(function(m) {
         return m[m.length-1];
     });
-    db.collection(dbColl).find({'start': {$in: bottomLvlLinks}})
-                         .sort({'rank': 1})
-                         .toArray(function(err, results) {
-        if (results && results.length > 0) {
+    Path.findAll({where: {
+                    start: {
+                        $in: bottomLvlLinks
+                    }
+                },
+                    order: 'rank ASC'
+                })
+    .then(function(results) {
+        if (results && results.length) {
             found_hitler = true;
             // get the found path (path we found by GETs)
             var idx = bottomLvlLinks.indexOf(results[0].start);
@@ -71,20 +79,14 @@ var depthComplete = function() {
             // remove the last element since it's how the DB entry starts
             foundPath.pop();
             // add the two paths together
-            solved_path = foundPath.concat(results[0].path);
+            solved_path = foundPath.concat(JSON.parse(results[0].path));
             // save the newly found path              
             insertIntoDatabase(solved_path, function() {
-                if (db.serverConfig.isConnected()) {
-                    printResults(solved_path);
-                    db.close();
-                }
-                process.exit();
-            });
+                printResults(solved_path);
+                exitproc();
+            }); 
         } else {
-            depth++;
-            var nextPath = pageQueue[depth][0]
-            var nextTitle = nextPath[nextPath.length-1];
-            getLinks(nextTitle, nextPath, false);
+            goToNextDepth();
         }
     });
 };
@@ -127,21 +129,8 @@ var launch = function() {
         request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
             var obj = JSON.parse(body);
             var title = obj.query.random[0].title;
+            console.log(title);
             getLinks(title, [], true);
-        });
-    }
-};
-
-var getStartingPage = function(title) {
-    if (title) {
-        // start page was specified
-        launch(title, [], true);
-    } else {
-        // get random page
-        request.get({url:WIKIPEDIA_API_URL, qs:RAND_PARAMS}, function(error, response, body) {
-            var obj = JSON.parse(body);
-            title = obj.query.random[0].title;
-            launch(title, [], true);
         });
     }
 };
@@ -165,33 +154,23 @@ var getLinks = function(title, inPath, isFirstPage) {
             }
             // check if we were given our destination
             if (title === destination || title === destAlt) {                
-                if (db.serverConfig.isConnected()) {
-                    printResults([destination]);
-                    db.close();
-                }
-                process.exit();
+                printResults([destination]);
+                exitproc();
             }
 
+            // page doesn't exist
             if (!title) {
-                // page doesn't exist
                 process.stdout.write('[\"NO_EXIST_ERROR\"]');
-                if (db.serverConfig.isConnected()) {
-                    db.close();
-                }
-                process.exit();
+                exitproc();
             }
-
             var links = parseLinks(jsonData);
             // check for our destination first
             if (links.indexOf(destination) > -1 || links.indexOf(destAlt) > -1) {
                 new_path.push(destination);
                 found_hitler = true;
                 insertIntoDatabase(new_path, function() {
-                    if (db.serverConfig.isConnected()) {
-                        printResults(new_path);    
-                        db.close();
-                    }
-                    process.exit();
+                    printResults(new_path);    
+                    exitproc()
                 });
                 return;
             }
@@ -199,10 +178,7 @@ var getLinks = function(title, inPath, isFirstPage) {
             if (links.length === 0) {
                 if (depth === 0) {
                     process.stdout.write('[\"DEAD_END_ERROR\"]');
-                    if (db.serverConfig.isConnected()) {
-                        db.close();
-                    }
-                    process.exit();
+                    exitproc();
                 }
                 return;
             }
@@ -241,17 +217,15 @@ var getLinks = function(title, inPath, isFirstPage) {
     });
 };
 
-var main = function() {
-    MongoClient.connect(dbUrl, function(err, _db) {
-        assert.equal(null, err);
-        if (err) {
-            process.stdout.write('[\"DB_ERROR\"]')
-            process.exit();
-        }
-        db = _db;
-        db.collection(dbColl).ensureIndex({'start': 1}, {'unique': true});
-        launch();
-    });
+var main = function(cb) {
+    db.sequelize
+      .authenticate()
+      .then(function(err) {
+        db.sequelize.sync().then(launch);
+      })
+      .catch(function (err) {
+        exitproc();
+      });
 };
 
 if(require.main === module) {

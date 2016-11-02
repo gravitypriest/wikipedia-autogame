@@ -1,17 +1,11 @@
 {
   "name": "Hitlerpedia",
-  "version": "0.3.2",
+  "version": "1.0.0",
   "description": "Find Hitler (or Jesus) in the shortest number of links from a Wikipedia page.",
-  "keywords": [
-    "OpenShift",
-    "Node.js",
-    "application",
-    "openshift"
-  ],
   "author": "Jeremy Crafts <craftsje@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jcrafts/wikipedia-hitler"
+    "url": "https://github.com/gravitypriest/wikipedia-hitler"
   },
   "engines": {
     "node": ">= 0.6.0",
@@ -19,9 +13,9 @@
   },
   "dependencies": {
     "express": "~3.4.4",
-    "request": ">= 2.64.0",
     "minimist": ">= 1.2.0",
-    "mongodb": ">=2.0.47"
+    "request": ">= 2.64.0",
+    "sequelize": "^3.24.1"
   },
   "scripts": {
     "postinstall": "HOME=$HOME/app-root/runtime/repo; npm install bower; bower install"
