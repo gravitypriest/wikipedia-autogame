@@ -14,7 +14,7 @@ var WIKIPEDIA_API_URL = 'https://en.wikipedia.org/w/api.php';
 // globals
 var startPage = config.server[config.selected].destination;;
 var currentDepth = 0;
-var maxDepth = 4;
+var maxDepth = config.max_depth;
 var seenPages = [];
 var pageQueue = [];
 var retries = 0;
@@ -46,7 +46,6 @@ var insertIntoDatabase = function(links, title, callback) {
     // look if the title has already been added
     var listToAdd = [];
     var basePath = [];
-    console.log(title);
 
     Path.findOne({where: {start: title}, raw: true}).then(function(result) {
         if (result && result.path) {
@@ -114,6 +113,7 @@ var getLinksHere = function(title, _lhcontinue) {
                 'User-Agent': 'Trumpedia Seedbot (http://trumpedia.net)'
   }}, function(error, response, body) {
         if (!error && response.statusCode == 200) {
+            retries = 0;
             var lhcontinue = '';
             var batchcomplete = false;
             var obj = JSON.parse(body);
@@ -174,12 +174,13 @@ var getLinksHere = function(title, _lhcontinue) {
             // something borked, try again
             console.log('Request went tits up for title %s and lh %s', title, _lhcontinue);
             console.log('Stand by...');
-            sleep.sleep(5);
-            retries++;
-            if (retries % 10 === 0) {
-                console.log('Retries: %s', retries);
-            }
-            getLinksHere(title, _lhcontinue);
+            setTimeout(function() {            
+                retries++;
+                if (retries % 10 === 0) {
+                    console.log('Retries: %s', retries);
+                }
+                getLinksHere(title, _lhcontinue);
+            }, 5000);
         }
     });
 };
